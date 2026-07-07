@@ -12,5 +12,6 @@ Thumbs.db
 
 # Config and local files
 serial_monitor_config.json
+/release/
 *.log
 *.txt

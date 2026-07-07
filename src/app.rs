@@ -659,11 +659,14 @@ impl eframe::App for SerialApp {
         egui::TopBottomPanel::bottom("bottom_bar")
             .frame(
                 egui::Frame::side_top_panel(&ctx.style())
-                    .inner_margin(egui::Margin::symmetric(15.0, 10.0)),
+                    .inner_margin(egui::Margin::symmetric(15.0, 8.0)),
             )
             .show(ctx, |ui| {
+                // Set consistent height for all interactive controls (comboboxes, text edits, buttons)
+                ui.spacing_mut().interact_size.y = 28.0;
+
                 ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(8.0, 0.0);
 
                         ui.label("TX Mode:");
@@ -681,7 +684,6 @@ impl eframe::App for SerialApp {
                             });
 
                         if self.config.tx_mode == TxMode::Ascii {
-                            ui.add_space(4.0);
                             ui.label("Line Ending:");
                             egui::ComboBox::from_id_source("line_ending_combo")
                                 .selected_text(self.config.line_ending.to_string())
@@ -702,62 +704,67 @@ impl eframe::App for SerialApp {
                                 });
                         }
 
-                        ui.add_space(6.0);
+                        // Calculate the remaining space for the text edit (Send button is 80.0, spacing is 8.0)
+                        let text_edit_width = (ui.available_width() - 88.0).max(100.0);
 
-                        // Text entry box
-                        let text_edit_width = (ui.available_width() - 90.0).max(100.0);
-                        let hint_msg = match self.config.tx_mode {
-                            TxMode::Ascii => "Type ASCII message and press Enter...",
-                            TxMode::Hex => "Type HEX bytes (e.g. AA 03 10 FF) and press Enter...",
-                            TxMode::Binary => {
-                                "Type Binary bytes (e.g. 10101010 00000011) and press Enter..."
+                        ui.add_enabled_ui(self.is_connected, |ui| {
+                            let hint_msg = if self.is_connected {
+                                match self.config.tx_mode {
+                                    TxMode::Ascii => "Type ASCII message and press Enter...",
+                                    TxMode::Hex => "Type HEX bytes (e.g. AA 03 10 FF) and press Enter...",
+                                    TxMode::Binary => {
+                                        "Type Binary bytes (e.g. 10101010 00000011) and press Enter..."
+                                    }
+                                }
+                            } else {
+                                "Connect to a serial port to send messages..."
+                            };
+
+                            let response = ui.add_sized(
+                                [text_edit_width, 28.0],
+                                egui::TextEdit::singleline(&mut self.tx_input)
+                                    .hint_text(hint_msg)
+                                    .margin(egui::vec2(8.0, 4.0)),
+                            );
+
+                            if response.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                if validation_error.is_none() {
+                                    self.send_data();
+                                }
+                                response.request_focus();
                             }
-                        };
 
-                        let response = ui.add_sized(
-                            [text_edit_width, 30.0],
-                            egui::TextEdit::singleline(&mut self.tx_input).hint_text(hint_msg),
-                        );
-
-                        if response.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            if validation_error.is_none() {
-                                self.send_data();
-                            }
-                            response.request_focus();
-                        }
-
-                        if response.has_focus() {
-                            if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp))
-                                && !self.command_history.is_empty()
-                            {
-                                let idx = self
-                                    .history_index
-                                    .map(|i| if i > 0 { i - 1 } else { 0 })
-                                    .unwrap_or(self.command_history.len() - 1);
-                                self.history_index = Some(idx);
-                                self.tx_input = self.command_history[idx].clone();
-                            }
-                            if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                                if let Some(idx) = self.history_index {
-                                    if idx + 1 < self.command_history.len() {
-                                        let next_idx = idx + 1;
-                                        self.history_index = Some(next_idx);
-                                        self.tx_input = self.command_history[next_idx].clone();
-                                    } else {
-                                        self.history_index = None;
-                                        self.tx_input.clear();
+                            if response.has_focus() {
+                                if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp))
+                                    && !self.command_history.is_empty()
+                                {
+                                    let idx = self
+                                        .history_index
+                                        .map(|i| if i > 0 { i - 1 } else { 0 })
+                                        .unwrap_or(self.command_history.len() - 1);
+                                    self.history_index = Some(idx);
+                                    self.tx_input = self.command_history[idx].clone();
+                                }
+                                if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                                    if let Some(idx) = self.history_index {
+                                        if idx + 1 < self.command_history.len() {
+                                            let next_idx = idx + 1;
+                                            self.history_index = Some(next_idx);
+                                            self.tx_input = self.command_history[next_idx].clone();
+                                        } else {
+                                            self.history_index = None;
+                                            self.tx_input.clear();
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        ui.add_space(4.0);
-
-                        let btn_enabled = validation_error.is_none() && !self.tx_input.is_empty();
-                        let btn = egui::Button::new("Send").min_size(egui::vec2(80.0, 30.0));
-                        if ui.add_enabled(btn_enabled, btn).clicked() {
-                            self.send_data();
-                        }
+                            let btn_enabled = validation_error.is_none() && !self.tx_input.is_empty();
+                            let btn = egui::Button::new("Send").min_size(egui::vec2(80.0, 28.0));
+                            if ui.add_enabled(btn_enabled, btn).clicked() {
+                                self.send_data();
+                            }
+                        });
                     });
 
                     // Live translation / Validation preview row

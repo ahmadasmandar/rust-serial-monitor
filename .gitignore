@@ -1,0 +1,16 @@
+/target
+Cargo.lock
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Config and local files
+serial_monitor_config.json
+*.log
+*.txt

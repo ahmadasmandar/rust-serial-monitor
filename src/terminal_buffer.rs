@@ -7,6 +7,7 @@ pub struct BufferEntry {
     pub timestamp: DateTime<Local>,
     pub direction: Direction,
     pub data: Vec<u8>,
+    pub formatted_len: usize,
 }
 
 pub struct TerminalBuffer {
@@ -14,6 +15,14 @@ pub struct TerminalBuffer {
     pending: Vec<u8>,
     max_entries: usize,
     version: usize,
+    total_lines_received: usize,
+
+    // Incremental String caching parameters
+    cached_text: String,
+    cached_show_timestamps: bool,
+    cached_enable_translation: bool,
+    cached_translation_format: TranslationFormat,
+    cached_show_line_numbers: bool,
 }
 
 impl TerminalBuffer {
@@ -23,6 +32,12 @@ impl TerminalBuffer {
             pending: Vec::new(),
             max_entries,
             version: 0,
+            total_lines_received: 0,
+            cached_text: String::new(),
+            cached_show_timestamps: true,
+            cached_enable_translation: true,
+            cached_translation_format: TranslationFormat::Hex,
+            cached_show_line_numbers: true,
         }
     }
 
@@ -34,6 +49,8 @@ impl TerminalBuffer {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.pending.clear();
+        self.cached_text.clear();
+        self.total_lines_received = 0;
         self.version += 1;
     }
 
@@ -47,14 +64,29 @@ impl TerminalBuffer {
         for i in 0..bytes.len() {
             if bytes[i] == b'\n' {
                 // We found a newline. Combine pending with the new slice up to the newline.
-                let mut line_data = std::mem::take(&mut self.pending);
+                let mut line_data = std::mem::replace(&mut self.pending, Vec::with_capacity(256));
                 line_data.extend_from_slice(&bytes[start..=i]);
 
-                self.entries.push_back(BufferEntry {
+                self.total_lines_received += 1;
+                let line_num = if self.cached_show_line_numbers { Some(self.total_lines_received) } else { None };
+
+                let mut entry = BufferEntry {
                     timestamp,
                     direction,
                     data: line_data,
-                });
+                    formatted_len: 0,
+                };
+                let entry_str = Self::format_entry(
+                    &entry,
+                    line_num,
+                    self.cached_show_timestamps,
+                    self.cached_enable_translation,
+                    self.cached_translation_format,
+                );
+                entry.formatted_len = entry_str.len();
+                self.cached_text.push_str(&entry_str);
+                self.entries.push_back(entry);
+
                 start = i + 1;
             }
         }
@@ -66,12 +98,26 @@ impl TerminalBuffer {
 
         // If pending buffer grows too large without newlines (e.g. 4KB), flush it as a line anyway
         if self.pending.len() >= 4096 {
-            let line_data = std::mem::take(&mut self.pending);
-            self.entries.push_back(BufferEntry {
+            let line_data = std::mem::replace(&mut self.pending, Vec::with_capacity(4096));
+            self.total_lines_received += 1;
+            let line_num = if self.cached_show_line_numbers { Some(self.total_lines_received) } else { None };
+
+            let mut entry = BufferEntry {
                 timestamp,
                 direction,
                 data: line_data,
-            });
+                formatted_len: 0,
+            };
+            let entry_str = Self::format_entry(
+                &entry,
+                line_num,
+                self.cached_show_timestamps,
+                self.cached_enable_translation,
+                self.cached_translation_format,
+            );
+            entry.formatted_len = entry_str.len();
+            self.cached_text.push_str(&entry_str);
+            self.entries.push_back(entry);
         }
 
         self.truncate_internal();
@@ -83,7 +129,13 @@ impl TerminalBuffer {
             return;
         }
         while self.entries.len() > self.max_entries {
-            self.entries.pop_front();
+            if let Some(popped) = self.entries.pop_front() {
+                if popped.formatted_len <= self.cached_text.len() {
+                    self.cached_text.drain(..popped.formatted_len);
+                } else {
+                    self.cached_text.clear();
+                }
+            }
         }
     }
 
@@ -93,11 +145,25 @@ impl TerminalBuffer {
     }
 
     pub fn push_tx_entry(&mut self, bytes: &[u8], mode: TxMode, timestamp: DateTime<Local>) {
-        self.entries.push_back(BufferEntry {
+        self.total_lines_received += 1;
+        let line_num = if self.cached_show_line_numbers { Some(self.total_lines_received) } else { None };
+
+        let mut entry = BufferEntry {
             timestamp,
             direction: Direction::Tx(mode),
             data: bytes.to_vec(),
-        });
+            formatted_len: 0,
+        };
+        let entry_str = Self::format_entry(
+            &entry,
+            line_num,
+            self.cached_show_timestamps,
+            self.cached_enable_translation,
+            self.cached_translation_format,
+        );
+        entry.formatted_len = entry_str.len();
+        self.cached_text.push_str(&entry_str);
+        self.entries.push_back(entry);
         self.truncate_internal();
         self.version += 1;
     }
@@ -119,11 +185,17 @@ impl TerminalBuffer {
     // Helper to format a single entry showing ASCII on first line and optional translation underneath
     pub fn format_entry(
         entry: &BufferEntry,
+        line_number: Option<usize>,
         show_timestamps: bool,
         enable_translation: bool,
         translation_format: TranslationFormat,
     ) -> String {
         let mut result = String::new();
+
+        // Line number prefix
+        if let Some(num) = line_number {
+            result.push_str(&format!("[{}] ", num));
+        }
 
         // --- 1. Original ASCII line ---
         if show_timestamps {
@@ -186,33 +258,58 @@ impl TerminalBuffer {
     }
 
     pub fn export_to_string(
-        &self,
+        &mut self,
+        show_line_numbers: bool,
         show_timestamps: bool,
         enable_translation: bool,
         translation_format: TranslationFormat,
     ) -> String {
-        let mut result = String::new();
-        for entry in &self.entries {
-            result.push_str(&Self::format_entry(
-                entry,
-                show_timestamps,
-                enable_translation,
-                translation_format,
-            ));
+        // If formatting parameters changed, rebuild the cache
+        if self.cached_show_timestamps != show_timestamps
+            || self.cached_enable_translation != enable_translation
+            || self.cached_translation_format != translation_format
+            || self.cached_show_line_numbers != show_line_numbers
+            || (self.cached_text.is_empty() && !self.entries.is_empty())
+        {
+            self.cached_show_timestamps = show_timestamps;
+            self.cached_enable_translation = enable_translation;
+            self.cached_translation_format = translation_format;
+            self.cached_show_line_numbers = show_line_numbers;
+            self.cached_text.clear();
+
+            let mut current_num = self.total_lines_received - self.entries.len();
+            for entry in &mut self.entries {
+                current_num += 1;
+                let line_num = if show_line_numbers { Some(current_num) } else { None };
+                let entry_str = Self::format_entry(
+                    entry,
+                    line_num,
+                    show_timestamps,
+                    enable_translation,
+                    translation_format,
+                );
+                entry.formatted_len = entry_str.len();
+                self.cached_text.push_str(&entry_str);
+            }
         }
+
+        let mut final_text = self.cached_text.clone();
         if !self.pending.is_empty() {
             let temp_entry = BufferEntry {
                 timestamp: Local::now(),
                 direction: Direction::Rx,
                 data: self.pending.clone(),
+                formatted_len: 0,
             };
-            result.push_str(&Self::format_entry(
+            let line_num = if show_line_numbers { Some(self.total_lines_received + 1) } else { None };
+            final_text.push_str(&Self::format_entry(
                 &temp_entry,
+                line_num,
                 show_timestamps,
                 enable_translation,
                 translation_format,
             ));
         }
-        result
+        final_text
     }
 }

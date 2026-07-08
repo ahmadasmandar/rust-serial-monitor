@@ -19,6 +19,7 @@ pub struct AppConfig {
     pub tx_mode: TxMode,
     pub enable_translation: bool,
     pub translation_format: TranslationFormat,
+    pub show_line_numbers: bool,
 }
 
 impl Default for AppConfig {
@@ -37,6 +38,7 @@ impl Default for AppConfig {
             tx_mode: TxMode::Ascii,
             enable_translation: true,
             translation_format: TranslationFormat::Hex,
+            show_line_numbers: true,
         }
     }
 }

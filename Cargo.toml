@@ -18,5 +18,5 @@ rfd = "0.14"
 dirs = "5.0"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-[build-dependencies]
+[target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

@@ -82,7 +82,7 @@ fn test_terminal_buffer_limits() {
 
     assert_eq!(buffer.entries().len(), 3);
 
-    let formatted = buffer.export_to_string(false, true, TranslationFormat::Hex);
+    let formatted = buffer.export_to_string(false, false, true, TranslationFormat::Hex);
     assert!(formatted.contains("Line 2"));
     assert!(formatted.contains("Line 3"));
     assert!(formatted.contains("Line 4"));
@@ -200,7 +200,7 @@ fn test_non_utf8_rx_safe_formatting() {
     let bytes = &[0xFF, 0x00, 0x7F, b'A', b'\n'];
     buffer.push_bytes_and_truncate(bytes, Local::now());
 
-    let formatted = buffer.export_to_string(false, true, TranslationFormat::Hex);
+    let formatted = buffer.export_to_string(false, false, true, TranslationFormat::Hex);
 
     // Check Direction indicator
     assert!(formatted.contains("[RX]"));

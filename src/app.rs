@@ -11,6 +11,13 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 
+#[derive(Clone, Debug)]
+pub struct PortDetails {
+    pub port_name: String,
+    pub display_name: String,
+    pub is_low_info_or_microsoft: bool,
+}
+
 pub struct SerialApp {
     config: AppConfig,
     config_path: PathBuf,
@@ -18,7 +25,9 @@ pub struct SerialApp {
     cmd_tx: Sender<WorkerCommand>,
     event_rx: Receiver<WorkerEvent>,
 
-    available_ports: Vec<String>,
+    available_ports: Vec<PortDetails>,
+    exclude_low_info: bool,
+    is_paused: bool,
     is_connected: bool,
     status_message: String,
     error_message: Option<(String, Instant)>,
@@ -54,20 +63,92 @@ impl SerialApp {
             config.max_buffer_size
         });
 
-        // Customize UI styling for a modern, clean, premium dark-mode aesthetic
+        // ── Modern Dark Theme ──────────────────────────────────────────────
         let mut visuals = egui::Visuals::dark();
-        visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(20, 22, 30);
-        visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(28, 31, 43);
-        visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(41, 46, 64);
-        visuals.widgets.active.bg_fill = egui::Color32::from_rgb(58, 64, 90);
+
+        // Deep, warm-neutral background tones (easy on the eyes)
+        let bg_darkest   = egui::Color32::from_rgb(16, 18, 24);   // main bg
+        let bg_dark      = egui::Color32::from_rgb(22, 24, 32);   // panels
+        let bg_mid       = egui::Color32::from_rgb(30, 33, 44);   // interactive idle
+        let bg_hover     = egui::Color32::from_rgb(40, 44, 60);   // hover
+        let bg_active    = egui::Color32::from_rgb(52, 58, 80);   // active/pressed
+        let accent       = egui::Color32::from_rgb(86, 140, 245); // primary accent (soft blue)
+        let accent_dim   = egui::Color32::from_rgb(60, 105, 200); // accent dimmed
+        let text_primary = egui::Color32::from_rgb(210, 215, 225);// main text
+        let text_muted   = egui::Color32::from_rgb(130, 138, 160);// secondary text
+        let border_color = egui::Color32::from_rgb(42, 46, 62);   // subtle borders
+        let separator_col= egui::Color32::from_rgb(38, 42, 56);   // separators
+
+        // Panel backgrounds
+        visuals.panel_fill = bg_dark;
+        visuals.window_fill = bg_mid;
+        visuals.extreme_bg_color = bg_darkest; // TextEdit backgrounds
+        visuals.faint_bg_color = egui::Color32::from_rgb(26, 28, 38);
+
+        // Widget styling
+        visuals.widgets.noninteractive.bg_fill = bg_dark;
+        visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, text_muted);
+        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(0.5, border_color);
+        visuals.widgets.noninteractive.rounding = egui::Rounding::same(6.0);
+
+        visuals.widgets.inactive.bg_fill = bg_mid;
+        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, text_primary);
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.5, border_color);
         visuals.widgets.inactive.rounding = egui::Rounding::same(6.0);
+
+        visuals.widgets.hovered.bg_fill = bg_hover;
+        visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, accent_dim);
         visuals.widgets.hovered.rounding = egui::Rounding::same(6.0);
+
+        visuals.widgets.active.bg_fill = bg_active;
+        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+        visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, accent);
         visuals.widgets.active.rounding = egui::Rounding::same(6.0);
+
+        visuals.widgets.open.bg_fill = bg_hover;
+        visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, text_primary);
+        visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, accent_dim);
+        visuals.widgets.open.rounding = egui::Rounding::same(6.0);
+
+        // Selection highlight (accent-tinted)
+        visuals.selection.bg_fill = egui::Color32::from_rgba_unmultiplied(86, 140, 245, 80);
+        visuals.selection.stroke = egui::Stroke::new(1.0, accent);
+
+        // Window styling
+        visuals.window_rounding = egui::Rounding::same(10.0);
+        visuals.window_shadow = egui::epaint::Shadow {
+            offset: egui::vec2(0.0, 4.0),
+            blur: 16.0,
+            spread: 2.0,
+            color: egui::Color32::from_black_alpha(100),
+        };
+        visuals.window_stroke = egui::Stroke::new(1.0, border_color);
+
+        // Popup menus
+        visuals.popup_shadow = egui::epaint::Shadow {
+            offset: egui::vec2(0.0, 2.0),
+            blur: 10.0,
+            spread: 1.0,
+            color: egui::Color32::from_black_alpha(80),
+        };
+
+        // Separator color
+        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(0.5, separator_col);
+
+
+        // Hyperlinks
+        visuals.hyperlink_color = accent;
+
+        // Striped backgrounds for tables/grids
+        visuals.striped = true;
+
         cc.egui_ctx.set_visuals(visuals);
 
         let mut style = (*cc.egui_ctx.style()).clone();
         style.spacing.button_padding = egui::vec2(14.0, 8.0);
         style.spacing.item_spacing = egui::vec2(12.0, 10.0);
+        style.spacing.window_margin = egui::Margin::same(16.0);
 
         use egui::TextStyle::*;
         style.text_styles = [
@@ -101,6 +182,8 @@ impl SerialApp {
             cmd_tx,
             event_rx,
             available_ports: Vec::new(),
+            exclude_low_info: true,
+            is_paused: false,
             is_connected: false,
             status_message: "Disconnected".to_string(),
             error_message: None,
@@ -124,10 +207,69 @@ impl SerialApp {
     fn refresh_ports(&mut self) {
         match serialport::available_ports() {
             Ok(ports) => {
-                self.available_ports = ports.into_iter().map(|p| p.port_name).collect();
-                if !self.available_ports.contains(&self.config.serial.port_name) {
-                    if let Some(first) = self.available_ports.first() {
-                        self.config.serial.port_name = first.clone();
+                self.available_ports = ports.into_iter().map(|p| {
+                    let port_name = p.port_name.clone();
+                    let mut product_name = None;
+                    let mut manufacturer = None;
+                    let mut is_low_info_or_microsoft = false;
+
+                    match &p.port_type {
+                        serialport::SerialPortType::UsbPort(usb) => {
+                            product_name = usb.product.clone();
+                            manufacturer = usb.manufacturer.clone();
+                            
+                            if let Some(ref mtf) = manufacturer {
+                                let mtf_lower = mtf.to_lowercase();
+                                if mtf_lower.contains("microsoft") {
+                                    is_low_info_or_microsoft = true;
+                                }
+                            } else {
+                                is_low_info_or_microsoft = true;
+                            }
+                            
+                            let has_vid_pid = usb.vid != 0 || usb.pid != 0;
+                            let has_serial = usb.serial_number.is_some() && usb.serial_number.as_ref().unwrap() != "Not available";
+                            let has_product = usb.product.is_some() && usb.product.as_ref().unwrap() != "Not available";
+                            
+                            if !has_vid_pid || !has_serial || !has_product {
+                                is_low_info_or_microsoft = true;
+                            }
+                        }
+                        _ => {
+                            is_low_info_or_microsoft = true;
+                        }
+                    }
+
+                    let name_part = product_name.as_ref()
+                        .or(manufacturer.as_ref())
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty() && s.to_lowercase() != "not available");
+
+                    let display_name = if let Some(name) = name_part {
+                        format!("{}_{}", port_name, name)
+                    } else {
+                        port_name.clone()
+                    };
+
+                    PortDetails {
+                        port_name,
+                        display_name,
+                        is_low_info_or_microsoft,
+                    }
+                }).collect();
+
+                let has_current = self.available_ports.iter().any(|p| {
+                    p.port_name == self.config.serial.port_name && 
+                    (!self.exclude_low_info || !p.is_low_info_or_microsoft)
+                });
+
+                if !has_current {
+                    if let Some(first_valid) = self.available_ports.iter().find(|p| {
+                        !self.exclude_low_info || !p.is_low_info_or_microsoft
+                    }) {
+                        self.config.serial.port_name = first_valid.port_name.clone();
+                    } else {
+                        self.config.serial.port_name.clear();
                     }
                 }
             }
@@ -187,6 +329,7 @@ impl SerialApp {
 
     fn save_log_to_file(&mut self) {
         let text = self.terminal_buffer.export_to_string(
+            self.config.show_line_numbers,
             self.config.show_timestamps,
             self.config.enable_translation,
             self.config.translation_format,
@@ -229,8 +372,10 @@ impl eframe::App for SerialApp {
                     self.status_message = "Disconnected".to_string();
                 }
                 WorkerEvent::DataReceived(data) => {
-                    self.terminal_buffer
-                        .push_bytes_and_truncate(&data, chrono::Local::now());
+                    if !self.is_paused {
+                        self.terminal_buffer
+                            .push_bytes_and_truncate(&data, chrono::Local::now());
+                    }
                 }
                 WorkerEvent::ErrorOccurred(err) => {
                     self.set_error(err);
@@ -246,6 +391,7 @@ impl eframe::App for SerialApp {
         let current_version = self.terminal_buffer.version();
         if current_version != self.last_buffer_version {
             self.terminal_text_cache = self.terminal_buffer.export_to_string(
+                self.config.show_line_numbers,
                 self.config.show_timestamps,
                 self.config.enable_translation,
                 self.config.translation_format,
@@ -256,8 +402,10 @@ impl eframe::App for SerialApp {
         // Top Toolbar
         egui::TopBottomPanel::top("top_bar")
             .frame(
-                egui::Frame::side_top_panel(&ctx.style())
-                    .inner_margin(egui::Margin::symmetric(15.0, 8.0)),
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(18, 20, 28))
+                    .inner_margin(egui::Margin::symmetric(15.0, 10.0))
+                    .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(38, 42, 56))),
             )
             .show(ctx, |ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -266,15 +414,22 @@ impl eframe::App for SerialApp {
 
                     // 1. Port selector
                     ui.label("Port:");
+                    let mut selected_display = self.config.serial.port_name.clone();
+                    if let Some(p) = self.available_ports.iter().find(|p| p.port_name == self.config.serial.port_name) {
+                        selected_display = p.display_name.clone();
+                    }
                     egui::ComboBox::from_id_source("port_combo")
-                        .selected_text(&self.config.serial.port_name)
-                        .width(140.0)
+                        .selected_text(&selected_display)
+                        .width(180.0)
                         .show_ui(ui, |ui| {
                             for port in &self.available_ports {
+                                if self.exclude_low_info && port.is_low_info_or_microsoft {
+                                    continue;
+                                }
                                 ui.selectable_value(
                                     &mut self.config.serial.port_name,
-                                    port.clone(),
-                                    port,
+                                    port.port_name.clone(),
+                                    &port.display_name,
                                 );
                             }
                         });
@@ -303,6 +458,23 @@ impl eframe::App for SerialApp {
                         ui.spinner();
                     }
 
+                    if ui.checkbox(&mut self.exclude_low_info, "Filter MS/Low-Info").changed() {
+                        let has_current = self.available_ports.iter().any(|p| {
+                            p.port_name == self.config.serial.port_name && 
+                            (!self.exclude_low_info || !p.is_low_info_or_microsoft)
+                        });
+
+                        if !has_current {
+                            if let Some(first_valid) = self.available_ports.iter().find(|p| {
+                                !self.exclude_low_info || !p.is_low_info_or_microsoft
+                            }) {
+                                self.config.serial.port_name = first_valid.port_name.clone();
+                            } else {
+                                self.config.serial.port_name.clear();
+                            }
+                        }
+                    }
+
                     ui.add_space(2.0);
 
                     // 3. Baud selector
@@ -325,15 +497,15 @@ impl eframe::App for SerialApp {
 
                     // 4. Open/Close button (Width: 150px)
                     if self.is_connected {
-                        let btn = egui::Button::new("❌ Close Connection")
-                            .fill(egui::Color32::from_rgb(180, 50, 50))
+                        let btn = egui::Button::new("⏹ Disconnect")
+                            .fill(egui::Color32::from_rgb(160, 55, 55))
                             .min_size(egui::vec2(150.0, 28.0));
                         if ui.add(btn).clicked() {
                             let _ = self.cmd_tx.send(WorkerCommand::Disconnect);
                         }
                     } else {
-                        let btn = egui::Button::new("✅ Open Connection")
-                            .fill(egui::Color32::from_rgb(50, 150, 50))
+                        let btn = egui::Button::new("▶ Connect")
+                            .fill(egui::Color32::from_rgb(40, 140, 90))
                             .min_size(egui::vec2(150.0, 28.0));
                         if ui.add(btn).clicked() {
                             if !self.config.serial.port_name.is_empty() {
@@ -352,14 +524,16 @@ impl eframe::App for SerialApp {
                         ui.label(&self.status_message);
 
                         // Status Light
-                        let light_color = if self.is_connected {
-                            egui::Color32::from_rgb(50, 220, 50)
+                        let (light_color, glow_color) = if self.is_connected {
+                            (egui::Color32::from_rgb(60, 210, 120), egui::Color32::from_rgba_unmultiplied(60, 210, 120, 40))
                         } else {
-                            egui::Color32::from_rgb(150, 150, 150)
+                            (egui::Color32::from_rgb(100, 105, 120), egui::Color32::TRANSPARENT)
                         };
                         let (rect, _) =
-                            ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-                        let _rect = ui.painter().circle_filled(rect.center(), 6.0, light_color);
+                            ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                        // Glow ring
+                        ui.painter().circle_filled(rect.center(), 7.0, glow_color);
+                        ui.painter().circle_filled(rect.center(), 5.0, light_color);
                         ui.add_space(6.0);
                     });
                 });
@@ -369,13 +543,24 @@ impl eframe::App for SerialApp {
         egui::SidePanel::right("settings_panel")
             .resizable(false)
             .default_width(220.0)
-            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(egui::Margin::same(15.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(20, 22, 30))
+                    .inner_margin(egui::Margin::same(15.0))
+                    .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(38, 42, 56))),
+            )
             .show(ctx, |ui| {
                 ui.heading("Settings");
                 ui.add_space(8.0);
                 ui.separator();
                 ui.add_space(8.0);
 
+                if ui
+                    .checkbox(&mut self.config.show_line_numbers, "Show Line Numbers")
+                    .changed()
+                {
+                    self.last_buffer_version = usize::MAX;
+                }
                 if ui
                     .checkbox(&mut self.config.show_timestamps, "Show Timestamps")
                     .changed()
@@ -571,8 +756,9 @@ impl eframe::App for SerialApp {
 
                 if ui
                     .add_sized(
-                        [ui.available_width(), 30.0],
-                        egui::Button::new("💾 Export Log"),
+                        [ui.available_width(), 32.0],
+                        egui::Button::new("💾 Export Log")
+                            .fill(egui::Color32::from_rgb(35, 60, 110)),
                     )
                     .clicked()
                 {
@@ -582,8 +768,9 @@ impl eframe::App for SerialApp {
 
                 if ui
                     .add_sized(
-                        [ui.available_width(), 30.0],
-                        egui::Button::new("📂 Open Export Folder"),
+                        [ui.available_width(), 32.0],
+                        egui::Button::new("📂 Open Export Folder")
+                            .fill(egui::Color32::from_rgb(35, 60, 110)),
                     )
                     .clicked()
                 {
@@ -592,15 +779,31 @@ impl eframe::App for SerialApp {
                         .last_export_dir
                         .clone()
                         .unwrap_or_else(|| ".".to_string());
-                    let _ = std::process::Command::new("explorer")
-                        .arg(&dir_to_open)
-                        .spawn();
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = std::process::Command::new("explorer")
+                            .arg(&dir_to_open)
+                            .spawn();
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        let _ = std::process::Command::new("xdg-open")
+                            .arg(&dir_to_open)
+                            .spawn();
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = std::process::Command::new("open")
+                            .arg(&dir_to_open)
+                            .spawn();
+                    }
                 }
                 ui.add_space(8.0);
                 if ui
                     .add_sized(
-                        [ui.available_width(), 30.0],
-                        egui::Button::new("💾 Save Config"),
+                        [ui.available_width(), 32.0],
+                        egui::Button::new("💾 Save Config")
+                            .fill(egui::Color32::from_rgb(35, 60, 110)),
                     )
                     .clicked()
                 {
@@ -611,8 +814,9 @@ impl eframe::App for SerialApp {
                 ui.add_space(8.0);
                 if ui
                     .add_sized(
-                        [ui.available_width(), 30.0],
-                        egui::Button::new("ℹ About Developer"),
+                        [ui.available_width(), 32.0],
+                        egui::Button::new("ℹ About Developer")
+                            .fill(egui::Color32::from_rgb(30, 50, 75)),
                     )
                     .clicked()
                 {
@@ -658,8 +862,10 @@ impl eframe::App for SerialApp {
         // Bottom Input Toolbar
         egui::TopBottomPanel::bottom("bottom_bar")
             .frame(
-                egui::Frame::side_top_panel(&ctx.style())
-                    .inner_margin(egui::Margin::symmetric(15.0, 8.0)),
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(18, 20, 28))
+                    .inner_margin(egui::Margin::symmetric(15.0, 10.0))
+                    .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(38, 42, 56))),
             )
             .show(ctx, |ui| {
                 // Set consistent height for all interactive controls (comboboxes, text edits, buttons)
@@ -760,7 +966,9 @@ impl eframe::App for SerialApp {
                             }
 
                             let btn_enabled = validation_error.is_none() && !self.tx_input.is_empty();
-                            let btn = egui::Button::new("Send").min_size(egui::vec2(80.0, 28.0));
+                            let btn = egui::Button::new("Send")
+                                .fill(egui::Color32::from_rgb(50, 110, 190))
+                                .min_size(egui::vec2(80.0, 28.0));
                             if ui.add_enabled(btn_enabled, btn).clicked() {
                                 self.send_data();
                             }
@@ -787,15 +995,23 @@ impl eframe::App for SerialApp {
 
         // Center Panel - Output console
         egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(egui::Margin::same(15.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(14, 16, 22))
+                    .inner_margin(egui::Margin::same(15.0)),
+            )
             .show(ctx, |ui| {
                 // Check if there is an error to display
                 if let Some((ref err, timestamp)) = self.error_message {
-                    if timestamp.elapsed().as_secs() < 6 {
+                    let elapsed = timestamp.elapsed();
+                    if elapsed.as_secs() < 6 {
                         ui.colored_label(
                             egui::Color32::from_rgb(220, 50, 50),
                             format!("⚠️ {}", err),
                         );
+                        // Schedule repaint so the banner clears even when idle
+                        let remaining = std::time::Duration::from_secs(6) - elapsed;
+                        ctx.request_repaint_after(remaining);
                     } else {
                         self.error_message = None;
                     }
@@ -806,6 +1022,10 @@ impl eframe::App for SerialApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Clear Buffer").clicked() {
                             self.terminal_buffer.clear();
+                        }
+                        let pause_btn_text = if self.is_paused { "▶ Resume" } else { "⏸ Pause" };
+                        if ui.button(pause_btn_text).clicked() {
+                            self.is_paused = !self.is_paused;
                         }
                     });
                 });
@@ -825,6 +1045,20 @@ impl eframe::App for SerialApp {
                     .auto_shrink([false; 2])
                     .stick_to_bottom(self.config.auto_scroll)
                     .show(ui, |ui| {
+                        // Handle auto-scrolling when dragging mouse selection outside viewport bounds
+                        if ui.input(|i| i.pointer.primary_down()) {
+                            if let Some(mouse_pos) = ui.input(|i| i.pointer.latest_pos()) {
+                                let clip_rect = ui.clip_rect();
+                                if mouse_pos.y > clip_rect.max.y {
+                                    ui.scroll_with_delta(egui::vec2(0.0, -20.0));
+                                    ui.ctx().request_repaint();
+                                } else if mouse_pos.y < clip_rect.min.y {
+                                    ui.scroll_with_delta(egui::vec2(0.0, 20.0));
+                                    ui.ctx().request_repaint();
+                                }
+                            }
+                        }
+
                         let response_id = ui.make_persistent_id("terminal_text_edit");
 
                         // 1. Capture selection state from the previous frame before event handling

@@ -232,78 +232,87 @@ impl SerialWorker {
                 }
             }
             WorkerCommand::GetDeviceInfo(port_name) => {
-                let mut basic_info = None;
-                if let Ok(ports) = serialport::available_ports() {
-                    for p in ports {
-                        if p.port_name == port_name {
-                            basic_info = Some(p);
-                            break;
-                        }
-                    }
-                }
-
-                let mut manufacturer = "Not available".to_string();
-                let mut device_id = "Not available".to_string();
-                let mut service = "Not available".to_string();
-                let mut driver_provider = "Not available".to_string();
-                let mut driver_version = "Not available".to_string();
-                let mut driver_date = "Not available".to_string();
-
-                #[cfg(target_os = "windows")]
-                {
-                    // 1. Query Win32_PnPEntity using powershell
-                    let cmd = format!(
-                        "Get-CimInstance Win32_PnPEntity | Where-Object {{ $_.Name -like '*({})*' }} | Select-Object Manufacturer, DeviceID, Service | ConvertTo-Json",
-                        port_name
-                    );
-                    if let Ok(output) = std::process::Command::new("powershell")
-                        .args(["-Command", &cmd])
-                        .output()
-                    {
-                        if output.status.success() {
-                            let stdout = String::from_utf8_lossy(&output.stdout);
-                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                                if let Some(m) = json["Manufacturer"].as_str() {
-                                    manufacturer = m.to_string();
-                                }
-                                if let Some(id) = json["DeviceID"].as_str() {
-                                    device_id = id.to_string();
-                                }
-                                if let Some(s) = json["Service"].as_str() {
-                                    service = s.to_string();
-                                }
+                // Spawn detached thread to avoid blocking the serial read loop
+                let event_tx = self.event_tx.clone();
+                let ctx = self.ctx.clone();
+                std::thread::spawn(move || {
+                    let mut basic_info = None;
+                    if let Ok(ports) = serialport::available_ports() {
+                        for p in ports {
+                            if p.port_name == port_name {
+                                basic_info = Some(p);
+                                break;
                             }
                         }
                     }
 
-                    // 2. Query Win32_PnPSignedDriver if we got a DeviceID
-                    if device_id != "Not available" {
-                        let escaped_id = device_id.replace("\\", "\\\\");
-                        let cmd_drv = format!(
-                            "Get-CimInstance Win32_PnPSignedDriver | Where-Object {{ $_.DeviceID -eq '{}' }} | Select-Object DriverProviderName, DriverVersion, DriverDate | ConvertTo-Json",
-                            escaped_id
+                    let mut manufacturer = "Not available".to_string();
+                    let mut device_id = "Not available".to_string();
+                    let mut service = "Not available".to_string();
+                    let mut driver_provider = "Not available".to_string();
+                    let mut driver_version = "Not available".to_string();
+                    let mut driver_date = "Not available".to_string();
+
+                    #[cfg(target_os = "windows")]
+                    {
+                        use std::os::windows::process::CommandExt;
+
+                        // 1. Query Win32_PnPEntity using powershell
+                        let cmd = format!(
+                            "Get-CimInstance Win32_PnPEntity | Where-Object {{ $_.Name -like '*({})*' }} | Select-Object Manufacturer, DeviceID, Service | ConvertTo-Json",
+                            port_name
                         );
-                        if let Ok(output) = std::process::Command::new("powershell")
-                            .args(["-Command", &cmd_drv])
-                            .output()
+                        let mut command = std::process::Command::new("powershell");
+                        command.args(["-Command", &cmd]);
+                        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                        if let Ok(output) = command.output()
                         {
                             if output.status.success() {
                                 let stdout = String::from_utf8_lossy(&output.stdout);
-                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout)
-                                {
-                                    if let Some(dp) = json["DriverProviderName"].as_str() {
-                                        driver_provider = dp.to_string();
+                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                                    if let Some(m) = json["Manufacturer"].as_str() {
+                                        manufacturer = m.to_string();
                                     }
-                                    if let Some(dv) = json["DriverVersion"].as_str() {
-                                        driver_version = dv.to_string();
+                                    if let Some(id) = json["DeviceID"].as_str() {
+                                        device_id = id.to_string();
                                     }
-                                    if let Some(dd) = json["DriverDate"].as_str() {
-                                        let clean_date = dd.replace("/Date(", "").replace(")/", "");
-                                        if let Ok(ms) = clean_date.parse::<i64>() {
-                                            if let Some(dt) =
-                                                chrono::DateTime::from_timestamp_millis(ms)
-                                            {
-                                                driver_date = dt.format("%Y-%m-%d").to_string();
+                                    if let Some(s) = json["Service"].as_str() {
+                                        service = s.to_string();
+                                    }
+                                }
+                            }
+                        }
+
+                        // 2. Query Win32_PnPSignedDriver if we got a DeviceID
+                        if device_id != "Not available" {
+                            let escaped_id = device_id.replace("\\", "\\\\");
+                            let cmd_drv = format!(
+                                "Get-CimInstance Win32_PnPSignedDriver | Where-Object {{ $_.DeviceID -eq '{}' }} | Select-Object DriverProviderName, DriverVersion, DriverDate | ConvertTo-Json",
+                                escaped_id
+                            );
+                            let mut command_drv = std::process::Command::new("powershell");
+                            command_drv.args(["-Command", &cmd_drv]);
+                            command_drv.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                            if let Ok(output) = command_drv.output()
+                            {
+                                if output.status.success() {
+                                    let stdout = String::from_utf8_lossy(&output.stdout);
+                                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout)
+                                    {
+                                        if let Some(dp) = json["DriverProviderName"].as_str() {
+                                            driver_provider = dp.to_string();
+                                        }
+                                        if let Some(dv) = json["DriverVersion"].as_str() {
+                                            driver_version = dv.to_string();
+                                        }
+                                        if let Some(dd) = json["DriverDate"].as_str() {
+                                            let clean_date = dd.replace("/Date(", "").replace(")/", "");
+                                            if let Ok(ms) = clean_date.parse::<i64>() {
+                                                if let Some(dt) =
+                                                    chrono::DateTime::from_timestamp_millis(ms)
+                                                {
+                                                    driver_date = dt.format("%Y-%m-%d").to_string();
+                                                }
                                             }
                                         }
                                     }
@@ -311,63 +320,118 @@ impl SerialWorker {
                             }
                         }
                     }
-                }
 
-                let mut port_type = "Unknown".to_string();
-                let mut vid = "Not available".to_string();
-                let mut pid = "Not available".to_string();
-                let mut serial_number = "Not available".to_string();
-                let mut product = "Not available".to_string();
-
-                if let Some(info) = basic_info {
-                    match info.port_type {
-                        serialport::SerialPortType::UsbPort(usb) => {
-                            port_type = "USB".to_string();
-                            vid = format!("0x{:04X}", usb.vid);
-                            pid = format!("0x{:04X}", usb.pid);
-                            if let Some(sn) = usb.serial_number {
-                                serial_number = sn;
-                            }
-                            if let Some(prod) = usb.product {
-                                product = prod;
-                            }
-                            if manufacturer == "Not available" {
-                                if let Some(m) = usb.manufacturer {
-                                    manufacturer = m;
+                    #[cfg(target_os = "linux")]
+                    {
+                        // Query udevadm for device properties
+                        if let Ok(output) = std::process::Command::new("udevadm")
+                            .args(["info", "--query=property", "--name", &port_name])
+                            .output()
+                        {
+                            if output.status.success() {
+                                let stdout = String::from_utf8_lossy(&output.stdout);
+                                for line in stdout.lines() {
+                                    if let Some((key, val)) = line.split_once('=') {
+                                        match key {
+                                            "ID_VENDOR" | "ID_VENDOR_FROM_DATABASE" => {
+                                                if manufacturer == "Not available" {
+                                                    manufacturer = val.to_string();
+                                                }
+                                            }
+                                            "ID_MODEL" | "ID_MODEL_FROM_DATABASE" => {
+                                                // Will be used as product fallback
+                                            }
+                                            "ID_SERIAL" => {
+                                                device_id = val.to_string();
+                                            }
+                                            "DRIVER" => {
+                                                service = val.to_string();
+                                                driver_provider = val.to_string();
+                                            }
+                                            "ID_USB_DRIVER" => {
+                                                if service == "Not available" {
+                                                    service = val.to_string();
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
                                 }
                             }
                         }
-                        serialport::SerialPortType::PciPort => {
-                            port_type = "PCI".to_string();
-                        }
-                        serialport::SerialPortType::BluetoothPort => {
-                            port_type = "Bluetooth".to_string();
-                        }
-                        serialport::SerialPortType::Unknown => {
-                            port_type = "Unknown".to_string();
+
+                        // Query driver module version from modinfo if we have a driver name
+                        if service != "Not available" {
+                            if let Ok(output) = std::process::Command::new("modinfo")
+                                .args(["-F", "version", &service])
+                                .output()
+                            {
+                                if output.status.success() {
+                                    let ver = String::from_utf8_lossy(&output.stdout)
+                                        .trim()
+                                        .to_string();
+                                    if !ver.is_empty() {
+                                        driver_version = ver;
+                                    }
+                                }
+                            }
                         }
                     }
-                }
 
-                let info_payload = DeviceInfo {
-                    port_name,
-                    manufacturer,
-                    device_id,
-                    service,
-                    driver_provider,
-                    driver_version,
-                    driver_date,
-                    port_type,
-                    vid,
-                    pid,
-                    serial_number,
-                    product,
-                };
+                    let mut port_type = "Unknown".to_string();
+                    let mut vid = "Not available".to_string();
+                    let mut pid = "Not available".to_string();
+                    let mut serial_number = "Not available".to_string();
+                    let mut product = "Not available".to_string();
 
-                let _ = self
-                    .event_tx
-                    .send(WorkerEvent::DeviceInfo(Box::new(info_payload)));
-                self.ctx.request_repaint();
+                    if let Some(info) = basic_info {
+                        match info.port_type {
+                            serialport::SerialPortType::UsbPort(usb) => {
+                                port_type = "USB".to_string();
+                                vid = format!("0x{:04X}", usb.vid);
+                                pid = format!("0x{:04X}", usb.pid);
+                                if let Some(sn) = usb.serial_number {
+                                    serial_number = sn;
+                                }
+                                if let Some(prod) = usb.product {
+                                    product = prod;
+                                }
+                                if manufacturer == "Not available" {
+                                    if let Some(m) = usb.manufacturer {
+                                        manufacturer = m;
+                                    }
+                                }
+                            }
+                            serialport::SerialPortType::PciPort => {
+                                port_type = "PCI".to_string();
+                            }
+                            serialport::SerialPortType::BluetoothPort => {
+                                port_type = "Bluetooth".to_string();
+                            }
+                            serialport::SerialPortType::Unknown => {
+                                port_type = "Unknown".to_string();
+                            }
+                        }
+                    }
+
+                    let info_payload = DeviceInfo {
+                        port_name,
+                        manufacturer,
+                        device_id,
+                        service,
+                        driver_provider,
+                        driver_version,
+                        driver_date,
+                        port_type,
+                        vid,
+                        pid,
+                        serial_number,
+                        product,
+                    };
+
+                    let _ = event_tx.send(WorkerEvent::DeviceInfo(Box::new(info_payload)));
+                    ctx.request_repaint();
+                });
             }
             WorkerCommand::Exit => {
                 return false;

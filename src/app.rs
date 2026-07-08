@@ -43,7 +43,6 @@ pub struct SerialApp {
     device_info: Option<DeviceInfo>,
     terminal_text_cache: String,
     last_buffer_version: usize,
-    terminal_selection: Option<(usize, usize)>,
 }
 
 impl SerialApp {
@@ -198,7 +197,6 @@ impl SerialApp {
             terminal_text_cache: String::new(),
             // Set to MAX so that it forces a cache rebuild on first draw
             last_buffer_version: usize::MAX,
-            terminal_selection: None,
         };
         app.refresh_ports();
         app
@@ -550,312 +548,300 @@ impl eframe::App for SerialApp {
                     .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(38, 42, 56))),
             )
             .show(ctx, |ui| {
-                ui.heading("Settings");
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        ui.heading("Settings");
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
 
-                if ui
-                    .checkbox(&mut self.config.show_line_numbers, "Show Line Numbers")
-                    .changed()
-                {
-                    self.last_buffer_version = usize::MAX;
-                }
-                if ui
-                    .checkbox(&mut self.config.show_timestamps, "Show Timestamps")
-                    .changed()
-                {
-                    self.last_buffer_version = usize::MAX;
-                }
-                ui.checkbox(&mut self.config.auto_scroll, "Auto-scroll");
-                if ui
-                    .checkbox(&mut self.config.enable_translation, "Enable Translation")
-                    .changed()
-                {
-                    self.last_buffer_version = usize::MAX;
-                }
-                if self.config.enable_translation {
-                    ui.horizontal(|ui| {
-                        ui.label("Format:");
-                        egui::ComboBox::from_id_source("translation_format_combo")
-                            .selected_text(self.config.translation_format.to_string())
-                            .width(100.0)
-                            .show_ui(ui, |ui| {
-                                for fmt in [TranslationFormat::Hex, TranslationFormat::Binary] {
-                                    if ui
-                                        .selectable_value(
-                                            &mut self.config.translation_format,
-                                            fmt,
-                                            fmt.to_string(),
-                                        )
-                                        .changed()
-                                    {
-                                        self.last_buffer_version = usize::MAX;
-                                    }
-                                }
-                            });
-                    });
-                }
-                ui.add_space(8.0);
-
-                ui.horizontal(|ui| {
                     if ui
-                        .checkbox(&mut self.config.unlimited_buffer, "Unlimited Lines")
+                        .checkbox(&mut self.config.show_line_numbers, "Show Line Numbers")
                         .changed()
                     {
-                        if self.config.unlimited_buffer {
-                            self.terminal_buffer.set_max_entries(0);
-                        } else {
-                            self.terminal_buffer
-                                .set_max_entries(self.config.max_buffer_size);
-                        }
+                        self.last_buffer_version = usize::MAX;
                     }
-                });
-
-                if !self.config.unlimited_buffer {
-                    ui.horizontal(|ui| {
-                        ui.label("Max Lines:");
-                        let mut max_lines = self.config.max_buffer_size;
-                        if ui
-                            .add(egui::DragValue::new(&mut max_lines).range(10..=100000))
-                            .changed()
-                        {
-                            self.config.max_buffer_size = max_lines;
-                            self.terminal_buffer.set_max_entries(max_lines);
-                        }
-                    });
-                }
-
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
-
-                egui::CollapsingHeader::new("🔌 Connection Settings")
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        ui.add_space(4.0);
-                        egui::Grid::new("serial_config_grid")
-                            .num_columns(2)
-                            .spacing([10.0, 10.0])
-                            .show(ui, |ui| {
-                                ui.label("Data Bits:");
-                                egui::ComboBox::from_id_source("data_bits_combo")
-                                    .selected_text(self.config.serial.data_bits.to_string())
-                                    .show_ui(ui, |ui| {
-                                        for db in [
-                                            DataBits::Five,
-                                            DataBits::Six,
-                                            DataBits::Seven,
-                                            DataBits::Eight,
-                                        ] {
-                                            ui.selectable_value(
-                                                &mut self.config.serial.data_bits,
-                                                db,
-                                                db.to_string(),
-                                            );
+                    if ui
+                        .checkbox(&mut self.config.show_timestamps, "Show Timestamps")
+                        .changed()
+                    {
+                        self.last_buffer_version = usize::MAX;
+                    }
+                    ui.checkbox(&mut self.config.auto_scroll, "Auto-scroll");
+                    if ui
+                        .checkbox(&mut self.config.enable_translation, "Enable Translation")
+                        .changed()
+                    {
+                        self.last_buffer_version = usize::MAX;
+                    }
+                    if self.config.enable_translation {
+                        ui.horizontal(|ui| {
+                            ui.label("Format:");
+                            egui::ComboBox::from_id_source("translation_format_combo")
+                                .selected_text(self.config.translation_format.to_string())
+                                .width(100.0)
+                                .show_ui(ui, |ui| {
+                                    for fmt in [TranslationFormat::Hex, TranslationFormat::Binary] {
+                                        if ui
+                                            .selectable_value(
+                                                &mut self.config.translation_format,
+                                                fmt,
+                                                fmt.to_string(),
+                                            )
+                                            .changed()
+                                        {
+                                            self.last_buffer_version = usize::MAX;
                                         }
-                                    });
-                                ui.end_row();
-
-                                ui.label("Parity:");
-                                egui::ComboBox::from_id_source("parity_combo")
-                                    .selected_text(self.config.serial.parity.to_string())
-                                    .show_ui(ui, |ui| {
-                                        for p in [Parity::None, Parity::Odd, Parity::Even] {
-                                            ui.selectable_value(
-                                                &mut self.config.serial.parity,
-                                                p,
-                                                p.to_string(),
-                                            );
-                                        }
-                                    });
-                                ui.end_row();
-
-                                ui.label("Stop Bits:");
-                                egui::ComboBox::from_id_source("stop_bits_combo")
-                                    .selected_text(self.config.serial.stop_bits.to_string())
-                                    .show_ui(ui, |ui| {
-                                        for sb in [StopBits::One, StopBits::Two] {
-                                            ui.selectable_value(
-                                                &mut self.config.serial.stop_bits,
-                                                sb,
-                                                sb.to_string(),
-                                            );
-                                        }
-                                    });
-                                ui.end_row();
-
-                                ui.label("Flow Ctrl:");
-                                egui::ComboBox::from_id_source("flow_ctrl_combo")
-                                    .selected_text(self.config.serial.flow_control.to_string())
-                                    .show_ui(ui, |ui| {
-                                        for fc in [
-                                            FlowControl::None,
-                                            FlowControl::Software,
-                                            FlowControl::Hardware,
-                                        ] {
-                                            ui.selectable_value(
-                                                &mut self.config.serial.flow_control,
-                                                fc,
-                                                fc.to_string(),
-                                            );
-                                        }
-                                    });
-                                ui.end_row();
-
-                                ui.label("Poll (ms):");
-                                ui.horizontal(|ui| {
-                                    let mut val = self.config.serial.poll_interval_ms;
-                                    if ui
-                                        .add(egui::DragValue::new(&mut val).range(0..=250))
-                                        .changed()
-                                    {
-                                        self.config.serial.poll_interval_ms = val;
-                                    }
-                                    if val == 0 {
-                                        ui.label("🚀 Fast");
                                     }
                                 });
-                                ui.end_row();
-                            });
-                    });
+                        });
+                    }
+                    ui.add_space(8.0);
 
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
-
-                ui.label("Terminal Font Settings:");
-                ui.add_space(6.0);
-
-                egui::Grid::new("font_settings_grid")
-                    .num_columns(2)
-                    .spacing([10.0, 10.0])
-                    .show(ui, |ui| {
-                        ui.label("Font Size:");
-                        ui.add(
-                            egui::Slider::new(&mut self.config.font_size, 10.0..=24.0).text("px"),
-                        );
-                        ui.end_row();
-
-                        ui.label("Font Color:");
-                        let mut color = egui::Color32::from_rgba_unmultiplied(
-                            self.config.font_color[0],
-                            self.config.font_color[1],
-                            self.config.font_color[2],
-                            self.config.font_color[3],
-                        );
-                        if ui.color_edit_button_srgba(&mut color).changed() {
-                            self.config.font_color = color.to_array();
+                    ui.horizontal(|ui| {
+                        if ui
+                            .checkbox(&mut self.config.unlimited_buffer, "Unlimited Lines")
+                            .changed()
+                        {
+                            if self.config.unlimited_buffer {
+                                self.terminal_buffer.set_max_entries(0);
+                            } else {
+                                self.terminal_buffer
+                                    .set_max_entries(self.config.max_buffer_size);
+                            }
                         }
-                        ui.end_row();
                     });
 
-                ui.add_space(15.0);
-                ui.separator();
-                ui.add_space(15.0);
+                    if !self.config.unlimited_buffer {
+                        ui.horizontal(|ui| {
+                            ui.label("Max Lines:");
+                            let mut max_lines = self.config.max_buffer_size;
+                            if ui
+                                .add(egui::DragValue::new(&mut max_lines).range(10..=100000))
+                                .changed()
+                            {
+                                self.config.max_buffer_size = max_lines;
+                                self.terminal_buffer.set_max_entries(max_lines);
+                            }
+                        });
+                    }
 
-                if ui
-                    .add_sized(
-                        [ui.available_width(), 32.0],
-                        egui::Button::new("💾 Export Log")
-                            .fill(egui::Color32::from_rgb(35, 60, 110)),
-                    )
-                    .clicked()
-                {
-                    self.save_log_to_file();
-                }
-                ui.add_space(8.0);
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
 
-                if ui
-                    .add_sized(
-                        [ui.available_width(), 32.0],
-                        egui::Button::new("📂 Open Export Folder")
-                            .fill(egui::Color32::from_rgb(35, 60, 110)),
-                    )
-                    .clicked()
-                {
-                    let dir_to_open = self
-                        .config
-                        .last_export_dir
-                        .clone()
-                        .unwrap_or_else(|| ".".to_string());
-                    #[cfg(target_os = "windows")]
+                    egui::CollapsingHeader::new("🔌 Connection Settings")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.add_space(4.0);
+                            egui::Grid::new("serial_config_grid")
+                                .num_columns(2)
+                                .spacing([10.0, 10.0])
+                                .show(ui, |ui| {
+                                    ui.label("Data Bits:");
+                                    egui::ComboBox::from_id_source("data_bits_combo")
+                                        .selected_text(self.config.serial.data_bits.to_string())
+                                        .show_ui(ui, |ui| {
+                                            for db in [
+                                                DataBits::Five,
+                                                DataBits::Six,
+                                                DataBits::Seven,
+                                                DataBits::Eight,
+                                            ] {
+                                                ui.selectable_value(
+                                                    &mut self.config.serial.data_bits,
+                                                    db,
+                                                    db.to_string(),
+                                                );
+                                            }
+                                        });
+                                    ui.end_row();
+
+                                    ui.label("Parity:");
+                                    egui::ComboBox::from_id_source("parity_combo")
+                                        .selected_text(self.config.serial.parity.to_string())
+                                        .show_ui(ui, |ui| {
+                                            for p in [Parity::None, Parity::Odd, Parity::Even] {
+                                                ui.selectable_value(
+                                                    &mut self.config.serial.parity,
+                                                    p,
+                                                    p.to_string(),
+                                                );
+                                            }
+                                        });
+                                    ui.end_row();
+
+                                    ui.label("Stop Bits:");
+                                    egui::ComboBox::from_id_source("stop_bits_combo")
+                                        .selected_text(self.config.serial.stop_bits.to_string())
+                                        .show_ui(ui, |ui| {
+                                            for sb in [StopBits::One, StopBits::Two] {
+                                                ui.selectable_value(
+                                                    &mut self.config.serial.stop_bits,
+                                                    sb,
+                                                    sb.to_string(),
+                                                );
+                                            }
+                                        });
+                                    ui.end_row();
+
+                                    ui.label("Flow Ctrl:");
+                                    egui::ComboBox::from_id_source("flow_ctrl_combo")
+                                        .selected_text(self.config.serial.flow_control.to_string())
+                                        .show_ui(ui, |ui| {
+                                            for fc in [
+                                                FlowControl::None,
+                                                FlowControl::Software,
+                                                FlowControl::Hardware,
+                                            ] {
+                                                ui.selectable_value(
+                                                    &mut self.config.serial.flow_control,
+                                                    fc,
+                                                    fc.to_string(),
+                                                );
+                                            }
+                                        });
+                                    ui.end_row();
+
+                                    ui.label("Poll (ms):");
+                                    ui.horizontal(|ui| {
+                                        let mut val = self.config.serial.poll_interval_ms;
+                                        if ui
+                                            .add(egui::DragValue::new(&mut val).range(0..=250))
+                                            .changed()
+                                        {
+                                            self.config.serial.poll_interval_ms = val;
+                                        }
+                                        if val == 0 {
+                                            ui.label("🚀 Fast");
+                                        }
+                                    });
+                                    ui.end_row();
+                                });
+                        });
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    ui.label("Terminal Font Settings:");
+                    ui.add_space(6.0);
+
+                    egui::Grid::new("font_settings_grid")
+                        .num_columns(2)
+                        .spacing([10.0, 10.0])
+                        .show(ui, |ui| {
+                            ui.label("Font Size:");
+                            ui.add(
+                                egui::Slider::new(&mut self.config.font_size, 10.0..=24.0).text("px"),
+                            );
+                            ui.end_row();
+
+                            ui.label("Font Color:");
+                            let mut color = egui::Color32::from_rgba_unmultiplied(
+                                self.config.font_color[0],
+                                self.config.font_color[1],
+                                self.config.font_color[2],
+                                self.config.font_color[3],
+                            );
+                            if ui.color_edit_button_srgba(&mut color).changed() {
+                                self.config.font_color = color.to_array();
+                            }
+                            ui.end_row();
+                        });
+
+                    ui.add_space(15.0);
+                    ui.separator();
+                    ui.add_space(15.0);
+
+                    if ui
+                        .add_sized(
+                            [ui.available_width(), 32.0],
+                            egui::Button::new("💾 Export Log")
+                                .fill(egui::Color32::from_rgb(35, 60, 110)),
+                        )
+                        .clicked()
                     {
-                        let _ = std::process::Command::new("explorer")
-                            .arg(&dir_to_open)
-                            .spawn();
+                        self.save_log_to_file();
                     }
-                    #[cfg(target_os = "linux")]
+                    ui.add_space(8.0);
+
+                    if ui
+                        .add_sized(
+                            [ui.available_width(), 32.0],
+                            egui::Button::new("📂 Open Export Folder")
+                                .fill(egui::Color32::from_rgb(35, 60, 110)),
+                        )
+                        .clicked()
                     {
-                        let _ = std::process::Command::new("xdg-open")
-                            .arg(&dir_to_open)
-                            .spawn();
+                        let dir_to_open = self
+                            .config
+                            .last_export_dir
+                            .clone()
+                            .unwrap_or_else(|| ".".to_string());
+                        #[cfg(target_os = "windows")]
+                        {
+                            let _ = std::process::Command::new("explorer")
+                                .arg(&dir_to_open)
+                                .spawn();
+                        }
+                        #[cfg(target_os = "linux")]
+                        {
+                            let _ = std::process::Command::new("xdg-open")
+                                .arg(&dir_to_open)
+                                .spawn();
+                        }
+                        #[cfg(target_os = "macos")]
+                        {
+                            let _ = std::process::Command::new("open")
+                                .arg(&dir_to_open)
+                                .spawn();
+                        }
                     }
-                    #[cfg(target_os = "macos")]
+                    ui.add_space(8.0);
+                    if ui
+                        .add_sized(
+                            [ui.available_width(), 32.0],
+                            egui::Button::new("💾 Save Config")
+                                .fill(egui::Color32::from_rgb(35, 60, 110)),
+                        )
+                        .clicked()
                     {
-                        let _ = std::process::Command::new("open")
-                            .arg(&dir_to_open)
-                            .spawn();
+                        if let Err(e) = self.config.save_to_path(&self.config_path) {
+                            self.set_error(format!("Failed to save configuration: {}", e));
+                        }
                     }
-                }
-                ui.add_space(8.0);
-                if ui
-                    .add_sized(
-                        [ui.available_width(), 32.0],
-                        egui::Button::new("💾 Save Config")
-                            .fill(egui::Color32::from_rgb(35, 60, 110)),
-                    )
-                    .clicked()
-                {
-                    if let Err(e) = self.config.save_to_path(&self.config_path) {
-                        self.set_error(format!("Failed to save configuration: {}", e));
+                    ui.add_space(8.0);
+                    if ui
+                        .add_sized(
+                            [ui.available_width(), 32.0],
+                            egui::Button::new("ℹ About Developer")
+                                .fill(egui::Color32::from_rgb(30, 50, 75)),
+                        )
+                        .clicked()
+                    {
+                        self.show_about_dialog = true;
                     }
-                }
-                ui.add_space(8.0);
-                if ui
-                    .add_sized(
-                        [ui.available_width(), 32.0],
-                        egui::Button::new("ℹ About Developer")
-                            .fill(egui::Color32::from_rgb(30, 50, 75)),
-                    )
-                    .clicked()
-                {
-                    self.show_about_dialog = true;
-                }
+                });
             });
 
         // Live validation and preview calculation
         let mut validation_error = None;
-        let mut hex_preview = None;
 
         if !self.tx_input.is_empty() {
             match self.config.tx_mode {
-                TxMode::Ascii => {
-                    let mut data = self.tx_input.clone();
-                    data.push_str(self.config.line_ending.as_str());
-                    let hex_str: Vec<String> = data.bytes().map(|b| format!("{:02X}", b)).collect();
-                    hex_preview = Some(hex_str.join(" "));
+                TxMode::Ascii => {}
+                TxMode::Hex => {
+                    if let Err(e) = parse_hex(&self.tx_input) {
+                        validation_error = Some(e);
+                    }
                 }
-                TxMode::Hex => match parse_hex(&self.tx_input) {
-                    Ok(bytes) => {
-                        let hex_str: Vec<String> =
-                            bytes.iter().map(|b| format!("{:02X}", b)).collect();
-                        hex_preview = Some(hex_str.join(" "));
-                    }
-                    Err(e) => {
+                TxMode::Binary => {
+                    if let Err(e) = parse_binary(&self.tx_input) {
                         validation_error = Some(e);
                     }
-                },
-                TxMode::Binary => match parse_binary(&self.tx_input) {
-                    Ok(bytes) => {
-                        let hex_str: Vec<String> =
-                            bytes.iter().map(|b| format!("{:02X}", b)).collect();
-                        hex_preview = Some(hex_str.join(" "));
-                    }
-                    Err(e) => {
-                        validation_error = Some(e);
-                    }
-                },
+                }
             }
         }
 
@@ -974,22 +960,6 @@ impl eframe::App for SerialApp {
                             }
                         });
                     });
-
-                    // Live translation / Validation preview row
-                    if !self.tx_input.is_empty() {
-                        ui.add_space(4.0);
-                        if let Some(ref err) = validation_error {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(220, 50, 50),
-                                format!("⚠️ {}", err),
-                            );
-                        } else if let Some(ref hex_str) = hex_preview {
-                            ui.horizontal(|ui| {
-                                ui.weak("HEX Preview: ");
-                                ui.colored_label(egui::Color32::from_rgb(100, 200, 255), hex_str);
-                            });
-                        }
-                    }
                 });
             });
 
@@ -1059,86 +1029,16 @@ impl eframe::App for SerialApp {
                             }
                         }
 
-                        let response_id = ui.make_persistent_id("terminal_text_edit");
-
-                        // 1. Capture selection state from the previous frame before event handling
-                        let mut current_sel = None;
-                        if let Some(state) = egui::TextEdit::load_state(ui.ctx(), response_id) {
-                            if let Some(range) = state.cursor.char_range() {
-                                let start = range.primary.index.min(range.secondary.index);
-                                let end = range.primary.index.max(range.secondary.index);
-                                if start != end {
-                                    current_sel = Some((start, end));
-                                }
-                            }
-                        }
-
-                        if current_sel.is_some() {
-                            self.terminal_selection = current_sel;
-                        } else if ui.input(|i| i.pointer.any_click())
-                            && !ui.input(|i| i.pointer.secondary_down())
-                        {
-                            self.terminal_selection = None;
-                        }
-
-                        // 2. Restore selection if right-clicked or if context menu is active
-                        let right_clicked = ui.input(|i| i.pointer.secondary_pressed());
-                        if (right_clicked || ctx.is_context_menu_open())
-                            && self.terminal_selection.is_some()
-                        {
-                            if let Some((start, end)) = self.terminal_selection {
-                                if let Some(mut state) =
-                                    egui::TextEdit::load_state(ui.ctx(), response_id)
-                                {
-                                    use egui::text::{CCursor, CCursorRange};
-                                    let c_range = CCursorRange {
-                                        primary: CCursor::new(start),
-                                        secondary: CCursor::new(end),
-                                    };
-                                    #[allow(deprecated)]
-                                    state.set_ccursor_range(Some(c_range));
-                                    state.store(ui.ctx(), response_id);
-                                }
-                            }
-                        }
-
-                        let mut text = self.terminal_text_cache.clone();
                         let response = ui.add(
-                            egui::TextEdit::multiline(&mut text)
-                                .font(egui::FontId::monospace(self.config.font_size))
-                                .frame(false)
-                                .text_color(text_color)
-                                .desired_width(ui.available_width())
-                                .desired_rows(0)
-                                .id(response_id),
+                            egui::Label::new(
+                                egui::RichText::new(&self.terminal_text_cache)
+                                    .font(egui::FontId::monospace(self.config.font_size))
+                                    .color(text_color),
+                            )
+                            .selectable(true),
                         );
 
                         response.context_menu(|ui| {
-                            let mut selected_text = None;
-                            if let Some(state) = egui::TextEdit::load_state(ui.ctx(), response.id) {
-                                if let Some(range) = state.cursor.char_range() {
-                                    let start = range.primary.index.min(range.secondary.index);
-                                    let end = range.primary.index.max(range.secondary.index);
-                                    if start != end {
-                                        let chars: Vec<char> = text.chars().collect();
-                                        if start < chars.len() && end <= chars.len() {
-                                            selected_text =
-                                                Some(chars[start..end].iter().collect::<String>());
-                                        }
-                                    }
-                                }
-                            }
-
-                            let copy_sel_btn = egui::Button::new("📋 Copy Selection");
-                            if ui
-                                .add_enabled(selected_text.is_some(), copy_sel_btn)
-                                .clicked()
-                            {
-                                if let Some(sel) = selected_text {
-                                    ui.output_mut(|o| o.copied_text = sel);
-                                }
-                                ui.close_menu();
-                            }
 
                             if ui.button("📋 Copy All").clicked() {
                                 ui.output_mut(|o| o.copied_text = self.terminal_text_cache.clone());

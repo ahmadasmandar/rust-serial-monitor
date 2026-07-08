@@ -125,10 +125,8 @@ impl TerminalBuffer {
     }
 
     fn truncate_internal(&mut self) {
-        if self.max_entries == 0 {
-            return;
-        }
-        while self.entries.len() > self.max_entries {
+        let max = if self.max_entries == 0 { 20_000 } else { self.max_entries };
+        while self.entries.len() > max {
             if let Some(popped) = self.entries.pop_front() {
                 if popped.formatted_len <= self.cached_text.len() {
                     self.cached_text.drain(..popped.formatted_len);

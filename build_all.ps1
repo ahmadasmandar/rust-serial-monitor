@@ -2,6 +2,9 @@
 
 $ErrorActionPreference = "Stop"
 
+# Settings
+$OutputName = "AARustSerialMonitor"
+
 # Ensure the output release folder exists
 $ReleaseDir = Join-Path $PSScriptRoot "release"
 if (-not (Test-Path $ReleaseDir)) {
@@ -12,9 +15,9 @@ Write-Host "`n=== Step 1: Building Windows Release Binary ===" -ForegroundColor 
 try {
     cargo build --release
     $WinSource = Join-Path $PSScriptRoot "target\release\aa_rust_serial_monitor.exe"
-    $WinDest = Join-Path $ReleaseDir "aa_rust_serial_monitor.exe"
+    $WinDest = Join-Path $ReleaseDir "$OutputName.exe"
     Copy-Item -Path $WinSource -Destination $WinDest -Force
-    Write-Host "[SUCCESS] Windows binary compiled and copied to: release/aa_rust_serial_monitor.exe" -ForegroundColor Green
+    Write-Host "[SUCCESS] Windows binary compiled and copied to: release/$OutputName.exe" -ForegroundColor Green
 } catch {
     Write-Host "[ERROR] Failed to build Windows binary: $_" -ForegroundColor Red
     Exit 1
@@ -69,9 +72,9 @@ if ($DockerAvailable) {
     try {
         cross build --target x86_64-unknown-linux-gnu --release
         $LinuxSource = Join-Path $PSScriptRoot "target\x86_64-unknown-linux-gnu\release\aa_rust_serial_monitor"
-        $LinuxDest = Join-Path $ReleaseDir "aa_rust_serial_monitor"
+        $LinuxDest = Join-Path $ReleaseDir $OutputName
         Copy-Item -Path $LinuxSource -Destination $LinuxDest -Force
-        Write-Host "[SUCCESS] Linux binary compiled and copied to: release/aa_rust_serial_monitor" -ForegroundColor Green
+        Write-Host "[SUCCESS] Linux binary compiled and copied to: release/$OutputName" -ForegroundColor Green
     } catch {
         Write-Host "[ERROR] Failed to build Linux binary via cross: $_" -ForegroundColor Red
         Exit 1
@@ -114,9 +117,9 @@ elseif ($UseWsl) {
         wsl -d Ubuntu -u $wslUser bash -c "source ~/.cargo/env; cd '$linuxPath'; cargo build --release"
         
         $LinuxSource = Join-Path $PSScriptRoot "target\release\aa_rust_serial_monitor"
-        $LinuxDest = Join-Path $ReleaseDir "aa_rust_serial_monitor"
+        $LinuxDest = Join-Path $ReleaseDir $OutputName
         Copy-Item -Path $LinuxSource -Destination $LinuxDest -Force
-        Write-Host "[SUCCESS] Linux binary compiled and copied to: release/aa_rust_serial_monitor" -ForegroundColor Green
+        Write-Host "[SUCCESS] Linux binary compiled and copied to: release/$OutputName" -ForegroundColor Green
     } catch {
         Write-Host "[ERROR] Failed to build Linux binary inside WSL: $_" -ForegroundColor Red
         Exit 1

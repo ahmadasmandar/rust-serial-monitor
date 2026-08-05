@@ -241,13 +241,23 @@ impl SerialApp {
                         }
                     }
 
-                    let name_part = product_name.as_ref()
-                        .or(manufacturer.as_ref())
+                    let name_source = manufacturer.as_ref()
                         .map(|s| s.trim())
-                        .filter(|s| !s.is_empty() && s.to_lowercase() != "not available");
+                        .filter(|s| !s.is_empty() && s.to_lowercase() != "not available")
+                        .or_else(|| {
+                            product_name.as_ref()
+                                .map(|s| s.trim())
+                                .filter(|s| !s.is_empty() && s.to_lowercase() != "not available")
+                        });
 
-                    let display_name = if let Some(name) = name_part {
-                        format!("{}_{}", port_name, name)
+                    let display_name = if let Some(desc) = name_source {
+                        let truncated: String = desc.chars().take(16).collect();
+                        let truncated_trim = truncated.trim();
+                        if truncated_trim.is_empty() {
+                            port_name.clone()
+                        } else {
+                            format!("{}_{}", port_name, truncated_trim)
+                        }
                     } else {
                         port_name.clone()
                     };
@@ -421,7 +431,7 @@ impl eframe::App for SerialApp {
                     }
                     egui::ComboBox::from_id_source("port_combo")
                         .selected_text(&selected_display)
-                        .width(180.0)
+                        .width(150.0)
                         .show_ui(ui, |ui| {
                             for port in &self.available_ports {
                                 if self.exclude_low_info && port.is_low_info_or_microsoft {
@@ -525,18 +535,18 @@ impl eframe::App for SerialApp {
 
                     ui.add_space(6.0);
 
-                    // 4. Open/Close button (Width: 150px)
+                    // 4. Open/Close button (Width: 85.0px)
                     if self.is_connected {
                         let btn = egui::Button::new("⏹ Disconnect")
                             .fill(egui::Color32::from_rgb(160, 55, 55))
-                            .min_size(egui::vec2(150.0, 28.0));
+                            .min_size(egui::vec2(85.0, 28.0));
                         if ui.add(btn).clicked() {
                             let _ = self.cmd_tx.send(WorkerCommand::Disconnect);
                         }
                     } else {
                         let btn = egui::Button::new("▶ Connect")
                             .fill(egui::Color32::from_rgb(40, 140, 90))
-                            .min_size(egui::vec2(150.0, 28.0));
+                            .min_size(egui::vec2(85.0, 28.0));
                         if ui.add(btn).clicked() {
                             if !self.config.serial.port_name.is_empty() {
                                 self.terminal_buffer.clear();

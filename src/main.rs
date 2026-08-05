@@ -20,7 +20,7 @@ fn main() -> eframe::Result {
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("AA Rust Serial Monitor")
-        .with_inner_size([1250.0, 700.0]);
+        .with_inner_size([1280.0, 780.0]);
 
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(icon);

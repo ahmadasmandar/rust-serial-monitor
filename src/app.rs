@@ -218,7 +218,7 @@ impl SerialApp {
                         serialport::SerialPortType::UsbPort(usb) => {
                             product_name = usb.product.clone();
                             manufacturer = usb.manufacturer.clone();
-                            
+
                             if let Some(ref mtf) = manufacturer {
                                 let mtf_lower = mtf.to_lowercase();
                                 if mtf_lower.contains("microsoft") {
@@ -227,11 +227,11 @@ impl SerialApp {
                             } else {
                                 is_low_info_or_microsoft = true;
                             }
-                            
+
                             let has_vid_pid = usb.vid != 0 || usb.pid != 0;
                             let has_serial = usb.serial_number.is_some() && usb.serial_number.as_ref().unwrap() != "Not available";
                             let has_product = usb.product.is_some() && usb.product.as_ref().unwrap() != "Not available";
-                            
+
                             if !has_vid_pid || !has_serial || !has_product {
                                 is_low_info_or_microsoft = true;
                             }
@@ -270,7 +270,7 @@ impl SerialApp {
                 }).collect();
 
                 let has_current = self.available_ports.iter().any(|p| {
-                    p.port_name == self.config.serial.port_name && 
+                    p.port_name == self.config.serial.port_name &&
                     (!self.exclude_low_info || !p.is_low_info_or_microsoft)
                 });
 
@@ -471,7 +471,7 @@ impl eframe::App for SerialApp {
 
                     if ui.checkbox(&mut self.exclude_low_info, "Filter MS/Low-Info").changed() {
                         let has_current = self.available_ports.iter().any(|p| {
-                            p.port_name == self.config.serial.port_name && 
+                            p.port_name == self.config.serial.port_name &&
                             (!self.exclude_low_info || !p.is_low_info_or_microsoft)
                         });
 
@@ -1108,7 +1108,7 @@ impl eframe::App for SerialApp {
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.heading("AA Rust Serial Monitor");
-                        ui.label("Version 1.0.0");
+                        ui.label("Version 1.1.0");
                         ui.add_space(8.0);
                     });
                     ui.separator();

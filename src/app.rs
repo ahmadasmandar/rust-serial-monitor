@@ -34,6 +34,7 @@ pub struct SerialApp {
 
     terminal_buffer: TerminalBuffer,
     tx_input: String,
+    baud_rate_input: String,
 
     command_history: Vec<String>,
     history_index: Option<usize>,
@@ -55,6 +56,7 @@ impl SerialApp {
         let config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
         let config_path = config_dir.join("serial_monitor_config.json");
         let config = AppConfig::load_from_path(&config_path);
+        let baud_rate_input = config.serial.baud_rate.to_string();
 
         let terminal_buffer = TerminalBuffer::new(if config.unlimited_buffer {
             0
@@ -188,6 +190,7 @@ impl SerialApp {
             error_message: None,
             terminal_buffer,
             tx_input: String::new(),
+            baud_rate_input,
             command_history: Vec::new(),
             history_index: None,
             show_about_dialog: false,
@@ -475,21 +478,50 @@ impl eframe::App for SerialApp {
 
                     ui.add_space(2.0);
 
-                    // 3. Baud selector
+                    // 3. Baud rate input with ComboBox for common rates
                     ui.label("Baud:");
-                    let baudrates = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
-                    egui::ComboBox::from_id_source("baud_combo")
-                        .selected_text(self.config.serial.baud_rate.to_string())
-                        .width(120.0)
-                        .show_ui(ui, |ui| {
-                            for baud in baudrates {
-                                ui.selectable_value(
-                                    &mut self.config.serial.baud_rate,
-                                    baud,
-                                    baud.to_string(),
-                                );
+                    ui.horizontal(|ui| {
+                        let common_baudrates = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
+                        let mut combo_selected = self.config.serial.baud_rate.to_string();
+                        egui::ComboBox::from_id_source("baud_combo")
+                            .selected_text(&combo_selected)
+                            .width(100.0)
+                            .show_ui(ui, |ui| {
+                                for baud in common_baudrates {
+                                    ui.selectable_value(
+                                        &mut combo_selected,
+                                        baud.to_string(),
+                                        baud.to_string(),
+                                    );
+                                }
+                            });
+
+                        if let Ok(rate) = combo_selected.parse::<u32>() {
+                            if rate != self.config.serial.baud_rate {
+                                self.config.serial.baud_rate = rate;
+                                self.baud_rate_input = rate.to_string();
                             }
-                        });
+                        }
+
+                        let text_response = ui.add(
+                            egui::TextEdit::singleline(&mut self.baud_rate_input)
+                                .desired_width(80.0),
+                        );
+                        if text_response.changed() {
+                            self.baud_rate_input.retain(|c| c.is_ascii_digit());
+                            if let Ok(rate) = self.baud_rate_input.parse::<u32>() {
+                                self.config.serial.baud_rate = rate;
+                            }
+                        }
+                        if text_response.lost_focus() {
+                            if self.baud_rate_input.is_empty()
+                                || self.baud_rate_input.parse::<u32>().is_err()
+                            {
+                                self.baud_rate_input = self.config.serial.baud_rate.to_string();
+                                self.set_error("Invalid baud rate".to_string());
+                            }
+                        }
+                    });
 
                     ui.add_space(6.0);
 
